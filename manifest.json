@@ -1,0 +1,29 @@
+name: Deploy Jellyfin Plugin Repo
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Package Plugin
+        run: |
+          mkdir -p build
+          zip -j build/Jellyfin.Plugin.AzureIllusion.zip Jellyfin.Plugin.AzureIllusion.dll
+
+      - name: Jellyfin Repo Manifest Manager
+        uses: LizardByte/jellyfin-manifest-manager@v2
+        with:
+          input_file: build/Jellyfin.Plugin.AzureIllusion.zip
+          output_dir: repo-dist
+          token: ${{ secrets.GITHUB_TOKEN }}
