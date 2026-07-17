@@ -14,14 +14,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # Pakujemy plik dokładnie pod taką nazwą, jakiej szuka bot w logach
       - name: Package Plugin
         run: |
           mkdir -p build
-          zip -j build/Jellyfin.Plugin.AzureIllusion.zip Jellyfin.Plugin.AzureIllusion.dll
+          zip -j jellyfin-plugin-azureillusion-subtitles-polish.zip Jellyfin.Plugin.AzureIllusion.dll
 
       - name: Jellyfin Repo Manifest Manager
         uses: LizardByte/jellyfin-plugin-repo@v2026.602.212143
         with:
-          input_file: build/Jellyfin.Plugin.AzureIllusion.zip
-          output_dir: repo-dist
-          token: ${{ secrets.GITHUB_TOKEN }}
+          action: add
+          zipfile: jellyfin-plugin-azureillusion-subtitles-polish.zip
+          github_token: ${{ secrets.GITHUB_TOKEN }}
