@@ -1,28 +1,84 @@
-name: Deploy Jellyfin Plugin Repo
+name: Publish Jellyfin Plugin
 
 on:
   release:
-    types: [published]
+    types:
+      - published
 
 permissions:
   contents: write
 
 jobs:
-  deploy:
+  publish:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Pakujemy plik dokładnie pod taką nazwą, jakiej szuka bot w logach
-      - name: Package Plugin
-        run: |
-          mkdir -p build
-          zip -j jellyfin-plugin-azureillusion-subtitles-polish.zip Jellyfin.Plugin.AzureIllusion.dll
-
-      - name: Jellyfin Repo Manifest Manager
-        uses: LizardByte/jellyfin-plugin-repo@v2026.602.212143
         with:
-          action: add
-          zipfile: jellyfin-plugin-azureillusion-subtitles-polish.zip
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install JPRM
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install jprm
+
+      - name: Build Jellyfin plugin package
+        run: |
+          mkdir -p artifacts
+          python -m jprm plugin build . --output=./artifacts
+
+          echo "Utworzone pliki:"
+          find artifacts -maxdepth 2 -type f -print
+
+      - name: Upload ZIP to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP_FILE="$(find artifacts -maxdepth 1 -type f -name '*.zip' | head -n 1)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Nie znaleziono paczki ZIP."
+            exit 1
+          fi
+
+          FILE_NAME="$(basename "$ZIP_FILE")"
+
+          gh release upload \
+            "${{ github.event.release.tag_name }}" \
+            "$ZIP_FILE" \
+            --clobber
+
+          PLUGIN_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/${FILE_NAME}"
+
+          echo "Adres paczki: ${PLUGIN_URL}"
+
+          python -m jprm repo add \
+            --plugin-url "$PLUGIN_URL" \
+            ./manifest.json \
+            "$ZIP_FILE"
+
+      - name: Validate manifest
+        run: |
+          python -m json.tool manifest.json > /dev/null
+          cat manifest.json
+
+      - name: Commit updated manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add manifest.json
+
+          if git diff --cached --quiet; then
+            echo "Manifest nie wymaga aktualizacji."
+          else
+            git commit -m "Publish plugin ${{ github.event.release.tag_name }}"
+            git push origin main
+          fi
