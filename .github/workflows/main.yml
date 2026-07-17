@@ -20,7 +20,7 @@ jobs:
           zip -j build/Jellyfin.Plugin.AzureIllusion.zip Jellyfin.Plugin.AzureIllusion.dll
 
       - name: Jellyfin Repo Manifest Manager
-        uses: LizardByte/jellyfin-manifest-manager@v2
+        uses: LizardByte/jellyfin-plugin-repo@v2026.602.212143
         with:
           input_file: build/Jellyfin.Plugin.AzureIllusion.zip
           output_dir: repo-dist
