@@ -5,6 +5,13 @@ on:
     types:
       - published
 
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag istniejącego wydania, np. v0.1.0.0"
+        required: true
+        default: "v0.1.0.0"
+
 permissions:
   contents: write
 
@@ -13,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout main branch
         uses: actions/checkout@v4
         with:
           ref: main
@@ -29,48 +36,199 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install jprm
 
-      - name: Build Jellyfin plugin package
+      - name: Prepare Jellyfin plugin package
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          mkdir -p artifacts
-          python -m jprm plugin build . --output=./artifacts
+          set -euo pipefail
 
-          echo "Utworzone pliki:"
-          find artifacts -maxdepth 2 -type f -print
+          if [ -z "${RELEASE_TAG}" ]; then
+            echo "Nie określono tagu wydania."
+            exit 1
+          fi
+
+          PLUGIN_VERSION="${RELEASE_TAG#v}"
+          ZIP_NAME="jellyfin-plugin-azureillusion-subtitles-polish_${PLUGIN_VERSION}.zip"
+          ZIP_FILE="${GITHUB_WORKSPACE}/artifacts/${ZIP_NAME}"
+
+          mkdir -p artifacts
+          mkdir -p package
+
+          export PLUGIN_VERSION
+          export ZIP_NAME
+          export ZIP_FILE
+
+          python <<'PY'
+          from pathlib import Path
+          from datetime import datetime, timezone
+          import json
+          import os
+          import shutil
+          import uuid
+          import zipfile
+          import yaml
+
+          config_path = Path("build.yaml")
+
+          if not config_path.is_file():
+              raise SystemExit("Nie znaleziono pliku build.yaml")
+
+          config = yaml.safe_load(
+              config_path.read_text(encoding="utf-8")
+          )
+
+          version = os.environ["PLUGIN_VERSION"]
+          zip_file = Path(os.environ["ZIP_FILE"])
+          package_dir = Path("package")
+
+          required_fields = [
+              "name",
+              "guid",
+              "targetAbi",
+              "overview",
+              "description",
+              "category",
+              "owner",
+              "changelog",
+          ]
+
+          missing_fields = [
+              field
+              for field in required_fields
+              if not config.get(field)
+          ]
+
+          if missing_fields:
+              raise SystemExit(
+                  "Brak wymaganych pól w build.yaml: "
+                  + ", ".join(missing_fields)
+              )
+
+          # Sprawdzenie poprawności GUID.
+          uuid.UUID(str(config["guid"]))
+
+          artifacts = config.get(
+              "artifacts",
+              ["Jellyfin.Plugin.AzureIllusion.dll"],
+          )
+
+          for artifact in artifacts:
+              source = Path(artifact)
+
+              if not source.is_file():
+                  raise SystemExit(
+                      f"Nie znaleziono artefaktu: {source}"
+                  )
+
+              destination = package_dir / artifact
+              destination.parent.mkdir(
+                  parents=True,
+                  exist_ok=True,
+              )
+
+              shutil.copy2(source, destination)
+
+          metadata = {
+              "guid": str(config["guid"]),
+              "name": config["name"],
+              "description": config["description"],
+              "overview": config["overview"],
+              "owner": config["owner"],
+              "category": config["category"],
+              "version": version,
+              "changelog": config["changelog"],
+              "targetAbi": config["targetAbi"],
+              "timestamp": datetime.now(timezone.utc)
+                  .replace(microsecond=0)
+                  .isoformat()
+                  .replace("+00:00", "Z"),
+          }
+
+          if config.get("imageUrl"):
+              metadata["imageUrl"] = config["imageUrl"]
+
+          meta_path = package_dir / "meta.json"
+          meta_path.write_text(
+              json.dumps(
+                  metadata,
+                  ensure_ascii=False,
+                  indent=4,
+              ),
+              encoding="utf-8",
+          )
+
+          zip_file.parent.mkdir(
+              parents=True,
+              exist_ok=True,
+          )
+
+          with zipfile.ZipFile(
+              zip_file,
+              "w",
+              compression=zipfile.ZIP_DEFLATED,
+          ) as archive:
+              for file_path in package_dir.rglob("*"):
+                  if file_path.is_file():
+                      archive.write(
+                          file_path,
+                          file_path.relative_to(
+                              package_dir
+                          ).as_posix(),
+                      )
+
+          print(f"Utworzono paczkę: {zip_file}")
+          print("Zawartość paczki:")
+
+          with zipfile.ZipFile(zip_file, "r") as archive:
+              for name in archive.namelist():
+                  print(f" - {name}")
+          PY
+
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
+          echo "PLUGIN_VERSION=${PLUGIN_VERSION}" >> "$GITHUB_ENV"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+          echo "ZIP_FILE=${ZIP_FILE}" >> "$GITHUB_ENV"
 
       - name: Upload ZIP to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ZIP_FILE="$(find artifacts -maxdepth 1 -type f -name '*.zip' | head -n 1)"
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "Nie znaleziono paczki ZIP."
-            exit 1
-          fi
-
-          FILE_NAME="$(basename "$ZIP_FILE")"
+          set -euo pipefail
 
           gh release upload \
-            "${{ github.event.release.tag_name }}" \
-            "$ZIP_FILE" \
+            "${RELEASE_TAG}" \
+            "${ZIP_FILE}" \
             --clobber
 
-          PLUGIN_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/${FILE_NAME}"
+      - name: Update Jellyfin manifest
+        run: |
+          set -euo pipefail
 
-          echo "Adres paczki: ${PLUGIN_URL}"
+          if [ ! -f manifest.json ]; then
+            echo "[]" > manifest.json
+          fi
+
+          PLUGIN_URL="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${ZIP_NAME}"
+
+          echo "Adres paczki:"
+          echo "${PLUGIN_URL}"
 
           python -m jprm repo add \
-            --plugin-url "$PLUGIN_URL" \
-            ./manifest.json \
-            "$ZIP_FILE"
+            --plugin-url "${PLUGIN_URL}" \
+            manifest.json \
+            "${ZIP_FILE}"
 
       - name: Validate manifest
         run: |
           python -m json.tool manifest.json > /dev/null
+
+          echo "Wygenerowany manifest:"
           cat manifest.json
 
       - name: Commit updated manifest
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -79,6 +237,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "Manifest nie wymaga aktualizacji."
           else
-            git commit -m "Publish plugin ${{ github.event.release.tag_name }}"
-            git push origin main
+            git commit -m "Publish AzureIllusion Subtitles ${PLUGIN_VERSION}"
+            git push origin HEAD:main
           fi
