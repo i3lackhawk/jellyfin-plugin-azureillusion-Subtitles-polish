@@ -1,29 +1,20 @@
-name: Deploy Jellyfin Plugin Repo
-
-on:
-  release:
-    types: [published]
-
-permissions:
-  contents: write
-  pages: write
-  id-token: write
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Package Plugin
-        run: |
-          mkdir -p build
-          zip -j build/Jellyfin.Plugin.AzureIllusion.zip Jellyfin.Plugin.AzureIllusion.dll
-
-      - name: Jellyfin Repo Manifest Manager
-        uses: LizardByte/jellyfin-manifest-manager@v2
-        with:
-          input_file: build/Jellyfin.Plugin.AzureIllusion.zip
-          output_dir: repo-dist
-          token: ${{ secrets.GITHUB_TOKEN }}
+[
+  {
+    "id": "AzureIllusion",
+    "name": "AzureIllusion Subtitles",
+    "guid": "c0beec43-85b2-4d2a-89a3-d3c50974b914",
+    "category": "Subtitles",
+    "description": "Wtyczka pobiera polskie napisy z serwisu AzureIllusion.",
+    "overview": "Plugin dostarcza polskie napisy z API AzureIllusion do Jellyfin.",
+    "owner": "i3lackhawk",
+    "versions": [
+      {
+        "version": "0.1.0.0",
+        "changelog": "Pierwsza wersja wtyczki AzureIllusion.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com",
+        "checksum": ""
+      }
+    ]
+  }
+]
